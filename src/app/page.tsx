@@ -12,16 +12,15 @@ type Poem = {
   shimo_no_ku: string;
   shimo_hiragana: string;
   author: string;
+  genre: string;
+  modern_translation: string;
+
 };
 
 // コンポーネント開始
 export default function Home() {
-  // useState群
-  const [no, setNo] = useState<number | null>(null) // 歌番号
-  const [kamiNoKu, setKamiNoKu] = useState('')      // 上の句
-  const [kamiHira, setKamiHira] = useState('')      // 上の句のひらがな
-  const [shimoNoku, setShimoNoku] = useState('')    // 下の句
-  const [shimoHira, setShimoHira] = useState('')    // 下の句のひらがな
+  // useStateをpoemオブジェクトにまとめる
+  const [currentPoem, setCurrentPoem] = useState<Poem | null>(null)
 
   // 選択肢管理
   const [choices, setChoices] = useState<string[]>([])
@@ -33,7 +32,9 @@ export default function Home() {
   const [result, setResult] = useState('')
   // 答えが表示済みかどうか
   const [showCorrect, setShowCorrect] = useState(false)
-  // AI通信中かどうか
+  // Supabase初回取得中
+  const [initialLoading, setInitialLoading] = useState(true)
+  // AI通信中
   const [loading, setLoading] = useState(false)
   // Supabaseから取得した全歌データ
   const [allPoems, setAllPoems] = useState<Poem[]>([])
@@ -58,11 +59,7 @@ export default function Home() {
 
   // 歌データ反映関数
   const applyPoemToState = (poem: Poem, allData: Poem[]) => {
-    setNo(poem.no)
-    setKamiNoKu(poem.kami_no_ku)
-    setKamiHira(poem.kami_hiragana)
-    setShimoNoku(poem.shimo_no_ku)
-    setShimoHira(poem.shimo_hiragana)
+    setCurrentPoem(poem)
     generateChoices(poem.shimo_no_ku, allData) // 4択生成
     setSelectedIndex(null)                     // 選択状態のリセット
     setShowCorrect(false)                      // 答え表示状態のリセット
@@ -87,6 +84,7 @@ export default function Home() {
 
       if (error) {
         console.error(error)
+        setInitialLoading(false)
         return
       }
 
@@ -95,20 +93,18 @@ export default function Home() {
         setAllPoems(data)
         
         // データからランダムに1首選択
-        // 初回表示時はuseEffect依存警告を避けるため
-        // applyPoemToStateを使わず直接state設定
         const firstPoem = getRandomPoem(data)
-        setNo(firstPoem.no)
-        setKamiNoKu(firstPoem.kami_no_ku)
-        setKamiHira(firstPoem.kami_hiragana)
-        setShimoNoku(firstPoem.shimo_no_ku)
-        setShimoHira(firstPoem.shimo_hiragana)
-        // 4択を生成
-        generateChoices(firstPoem.shimo_no_ku, data)
+        // ランダムな歌を画面へ反映
+        applyPoemToState(firstPoem, data)
       }
+      // 初回ロード完了
+      setInitialLoading(false)
     }
 
-    fetchAllPoems() 
+    fetchAllPoems()
+
+    // 初回実行時の警告を意図的に無視
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 「正解を確認する」押下時処理
@@ -119,7 +115,23 @@ export default function Home() {
 
     // 正解判定：選択位置と正解位置比較
     const isCorrect = selectedIndex === correctIndex
+
+    // ユーザーが選択した下の句
+    const selectedShimo = choices[selectedIndex]
+
+    // 選択した歌データ取得
+    const selectedPoem = allPoems.find(
+      p => p.shimo_no_ku === selectedShimo
+    )
+
+    //エラー回避
+    if (!selectedPoem || !currentPoem) {
+      setResult('データ取得エラー')
+      return
+    }
+
     setResult(isCorrect ? '正解 🌸' : '不正解')
+
     // 答え表示ON
     setShowCorrect(true)
     // AI解説生成開始
@@ -130,11 +142,10 @@ export default function Home() {
       const res = await fetch('/api/judge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kamiNoKu,
-                               shimoNoku,
-                               choices,        // 4択
-                               selectedIndex,  // ユーザー回答
-                               correctIndex,   // 正解番号
+        body: JSON.stringify({ 
+          poem: currentPoem,
+          selectedPoem,
+          isCorrect,
          }),
       });
 
@@ -168,6 +179,23 @@ export default function Home() {
     }
   }
 
+  // 初回ロード中表示
+  if (initialLoading) {
+    return (
+      <main className="min-h-screen bg-[#f8f5f0] flex items-center justify-center">
+        <div className="text-center animate-pulse">
+          <p className="text-2xl text-[#8c826e] mb-4 font-serif tracking-widest">
+            百人一首を読み込み中…
+          </p>
+
+          <p className="text-sm text-[#b3a58e] font-sans">
+            和歌を準備しています
+          </p>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-[#f8f5f0] text-[#4a4636] font-serif flex flex-col items-center px-6 py-6 md:px-20 md:py-10">
       <header className="mb-12 text-center">
@@ -184,12 +212,12 @@ export default function Home() {
         <div className="bg-white border border-[#e2dcd0] rounded-sm p-6 md:py-8 md:px-16 w-full xl:w-3/5 relative shadow-sm transition-all">
           <div className="mb-5 text-center">
             <span className="text-sm md:text-base tracking-widest text-[#b3a58e] block mb-2 italic">
-              ― 第 {no ?? '...'} 首 ―</span>
+              ― 第 {currentPoem?.no ?? '...'} 首 ―</span>
             <p className="text-2xl md:text-[2.1rem] font-medium leading-relaxed md:whitespace-nowrap">
-              {kamiNoKu}
+              {currentPoem?.kami_no_ku}
             </p>
             <p className="text-sm md:text-base text-[#a39c8d] font-sans tracking-wide">
-              {kamiHira}
+              {currentPoem?.kami_hiragana}
             </p>
           </div>
 
@@ -272,8 +300,8 @@ export default function Home() {
                 {/* 正解の下の句セクション */}
                 <div className="bg-[#fcfaf5] p-6 border-l-4 border-[#8c826e] mb-8 shadow-inner">
                   <p className="text-[#7a6e55] text-xs md:text-sm mb-2 font-sans tracking-widest uppercase italic">【 下の句 】</p>
-                  <p className="text-xl md:text-2xl leading-relaxed font-medium">{shimoNoku}</p>
-                  <p className="text-xs md:text-sm text-[#a39c8d] mt-2 font-sans tracking-wider">{shimoHira}</p>
+                  <p className="text-xl md:text-2xl leading-relaxed font-medium">{currentPoem?.shimo_no_ku}</p>
+                  <p className="text-xs md:text-sm text-[#a39c8d] mt-2 font-sans tracking-wider">{currentPoem?.shimo_hiragana}</p>
                 </div>
                 {/* AI解説文 slice(1)1番目以降の解説部分だけ取得 */}
                 {/* 改行保持:whitespace-pre-wrap */}
@@ -291,6 +319,10 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      <p className="mt-6 text-xs text-center text-[#a39c8d] font-sans leading-relaxed">
+        ※ AIの回答は必ずしも正しいとは限りません。情報は確認するようにしてください。
+      </p>
 
       {/* 歌の一覧 */}
       <footer className="w-full max-w-7xl mt-40 mb-20">

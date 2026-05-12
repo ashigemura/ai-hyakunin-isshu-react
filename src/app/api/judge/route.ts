@@ -14,23 +14,31 @@ const SYSTEM_PROMPT = `
 生徒が次に正解できるように導くこと。
 
 【ルール】
-・「番目」「番」といった、選択した番号に関する記述は一切使用しない
 ・やさしい口調
-・否定しないが、曖昧にしない
-・短く区切って読みやすくする
+・短く読みやすく説明する
+・JSON形式で返す
+・断定しすぎない
+・知らない情報を無理に創作しない
+
+【ジャンル】
+ジャンルごとの雰囲気を感じられるように説明する
+・恋：感情や切なさを中心に説明
+・春夏秋冬：季節の情景を中心に説明
+・羇旅：旅の寂しさや孤独感を説明
+・雑：人生観や心情をやさしく説明
 
 【必ず含める】
 ① 正解/不正解へのリアクション
-② 現代語訳（短く）
-③ 歌の背景や情報（短く）
-④ 掛詞や縁語の説明（短く）
+② 現代語訳
+③ 歌の雰囲気（ジャンルを参考にやさしく説明）
+④ ポイント（覚えやすい特徴を短く）
 
 【重要】
 ・平安時代の文化や情緒を感じられるようにすること
 
 【出力ルール】
 ・必ずJSONで出力する。余計な文章は禁止。
-・comment は必ず単一の文字列(string)で返す
+・comment は必ず単一の文字列（string）で返す
 ・配列は禁止
 ・オブジェクトは禁止
 ・文章の先頭に「,」を付けない
@@ -39,8 +47,9 @@ const SYSTEM_PROMPT = `
 ・以下の見出しを必ず使う
 ・読みやすく改行する
 
+
 ■ 現代語訳
-■ 歌の背景
+■ 歌の雰囲気
 ■ ポイント
 
 例：
@@ -69,37 +78,44 @@ export async function POST(req: NextRequest) {
 
 
     const {
-      kamiNoKu,
-      shimoNoku,
-      choices,
-      selectedIndex,
-      correctIndex,
+      poem,
+    selectedPoem,
+    isCorrect,
     } = await req.json()
 
-    // サーバー側でも正誤判定を行うことで、AI生成前に正誤を把握できるようにする
-    const isCorrect = selectedIndex === correctIndex
 
     // AIへ送るデータを成形
+    // * AIのハルシネーション対策
+    //   作者名・現代語訳などの事実データはSupabaseで管理し、AIは補助説明のみにする
     const prompt = `
-【上の句】
-${kamiNoKu}
 
-【正解（下の句）】
-${shimoNoku}
+【正解の歌】
+・歌番号：第${poem.no}首
+・上の句：${poem.kami_no_ku}
+・下の句：${poem.shimo_no_ku}
+・作者：${poem.author}
+・ジャンル：${poem.genre}
+・現代語訳：${poem.modern_translation}
 
-【選択肢】
-${choices.map((c: string, i: number) => `${i}: ${c}`).join('\n')}
-
-【ユーザーの選択】
-${selectedIndex}
-
-【正解の番号】
-${correctIndex}
+${!isCorrect ? `
+  【ユーザーが選んだ歌】
+  ・歌番号：第${selectedPoem.no}首
+  ・上の句：${selectedPoem.kami_no_ku}
+  ・下の句：${selectedPoem.shimo_no_ku}
+  ・作者：${selectedPoem.author}
+  ・ジャンル：${selectedPoem.genre}
+  ・現代語訳：${selectedPoem.modern_translation}
+` : ''}
 
 【判定】
 ${isCorrect ? '正解' : '不正解'}
 
-この情報をもとに、やさしくて記憶に残る解説をしてください。
+【重要ルール】
+・現代語訳を変更しない
+・作者を創作しない
+・事実を創作しない
+・不正解の場合は「どこが似ていたか」を説明する
+
 `
     // Gemini実行
     const result = await genAI.models.generateContent({
@@ -116,8 +132,13 @@ ${isCorrect ? '正解' : '不正解'}
 
     const text = result.text
 
-    // JSON抽出
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    // AIが付ける ```json を除去してからJSON抽出
+    const cleanedText = text
+      .replace(/```json/g, '')
+      .replace(/```/g, '')
+      .trim()
+
+    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/)
 
     // AIの返答からJSON形式を取り出せなかった場合
     if (!jsonMatch) {
